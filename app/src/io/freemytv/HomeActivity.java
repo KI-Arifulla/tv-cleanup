@@ -2,17 +2,11 @@ package io.freemytv;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.graphics.Color;
 import android.os.Bundle;
-import android.util.TypedValue;
-import android.view.Gravity;
 import android.view.KeyEvent;
-import android.widget.TextView;
 
 /**
- * The Free My TV home screen (Android's "Home" role in Free My TV mode). It runs in the :home process: if it crashes,
- * the safety net in the main process keeps working. On the 3rd crash within 5 min, the Watchdog gives the home screen
- * back to the TV's original one.
+ * The Free My TV home screen (Android's "Home" role; set once from a computer via adb). It runs in the :home process.
  */
 public class HomeActivity extends Activity {
     private HomeView home;
@@ -20,19 +14,6 @@ public class HomeActivity extends Activity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        Watchdog.install(this);
-        if (Watchdog.crashedTooOften(this)) {
-            // Don't try to draw again: only show a notice while the main process restores the original home screen.
-            HomeMode.requestRevertHome(this);
-            TextView t = new TextView(this);
-            t.setText(Ui.tr("Free My TV's home screen ran into a problem.\nGoing back to the TV's original home screen…"));
-            t.setTextColor(Color.WHITE);
-            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
-            t.setGravity(Gravity.CENTER);
-            t.setBackgroundColor(Color.rgb(7, 11, 30));
-            setContentView(t);
-            return;
-        }
         Ui.init(this);
         home = new HomeView(this);
         setContentView(home);
@@ -43,15 +24,28 @@ public class HomeActivity extends Activity {
         super.onResume();
         if (prefsVersion != Prefs.version) {
             prefsVersion = Prefs.version;
-            HomeData.get(this).settingsChanged();
-            recreate();   // a new language or city: draw everything again
+            recreate();   // a new language or theme: draw everything again
             return;
         }
-        if (home != null) home.resume();
+        if (home != null) {
+            home.resume();
+            // Back to drawing every pixel ourselves every frame: the fallback set in onPause() would only cost an
+            // extra overdraw pass from here on, for no benefit.
+            getWindow().setBackgroundDrawable(null);
+        }
     }
 
     @Override protected void onPause() {
-        if (home != null) home.pause();
+        if (home != null) {
+            home.pause();
+            // Something transient is covering us (e.g. the system Settings side panel, opened from our gear
+            // button's "TV Settings" row or the remote's Settings key) and our own render loop just stopped. We
+            // normally null the window's background to skip that overdraw every frame, but if Android recreates
+            // this window's surface while we sit here paused and not drawing, an undrawn surface defaults to black
+            // instead of showing anything of ours. A plain colour matching the current theme means that gap, if it
+            // ever happens, reads as "our background", not a black flash — restored to null in onResume() above.
+            getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(home.fallbackColor()));
+        }
         super.onPause();
     }
 
@@ -66,13 +60,7 @@ public class HomeActivity extends Activity {
         super.onDestroy();
     }
 
-    @Override public void onTrimMemory(int level) {
-        super.onTrimMemory(level);
-        if (level >= TRIM_MEMORY_COMPLETE) Recs.get(this).trim();
-    }
-
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
-        if (RemoteKeys.onKey(this, event)) return true;
         if (home != null && home.onKey(event)) return true;
         return super.dispatchKeyEvent(event);
     }

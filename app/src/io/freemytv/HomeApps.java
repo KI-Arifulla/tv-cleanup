@@ -24,6 +24,9 @@ import android.graphics.drawable.Drawable;
 import android.media.tv.TvContract;
 import android.media.tv.TvInputInfo;
 import android.media.tv.TvInputManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.view.View;
@@ -54,7 +57,7 @@ import java.util.regex.Pattern;
 final class HomeApps {
     private HomeApps() {}
 
-    static final int APP = 0, LIVE_TV = 1, INPUT = 2, ALL_APPS = 3, SETTINGS = 4, ANDROID_SETTINGS = 5;
+    static final int APP = 0, LIVE_TV = 1, INPUT = 2, ALL_APPS = 3, SETTINGS = 4, ANDROID_SETTINGS = 5, WIFI = 6;
     /** The "HDMI Inputs" button: opens the bottom drawer on the inputs (the home screen handles it). */
     static final int INPUTS = 7;
     /** Image size of each card (16:9; on screen it shows up to ~330 px wide). */
@@ -95,6 +98,23 @@ final class HomeApps {
         {"spotify", "Spotify", "com.spotify.tv.android", "1DB954", "", "1"},
     };
     static final int MAX_SHELF = 8;
+    /**
+     * Default shelf, by package, in this order, before any customisation (Settings > Shelf still wins once the user
+     * has picked their own list). Apps here that aren't in SHELF above (no bundled logo) fall back to their own TV
+     * banner, same as any other unknown app (see shelf()).
+     */
+    private static final String[] DEFAULT_SHELF_ORDER = {
+        "com.google.android.youtube.tv",
+        "com.netflix.ninja",
+        "in.startv.hotstar",
+        "com.amazon.amazonvideo.livingroom",
+        "com.graymatrix.did",
+        "tv.airtel.xstream.tvapp",
+        "com.tataskymore.open.uat",
+        "com.apple.atve.androidtv.appletv",
+        "com.lionsgateplay.videoapp",
+        "com.google.android.youtube.tvmusic",
+    };
     /** Live TV apps of some brands (the antenna's channels open through the standard Android request first). */
     static final String[] LIVE_TV_APPS = {"com.tcl.tv", "com.google.android.tv", "com.mediatek.wwtv.tvcenter", "com.sony.dtv.tvx",
             "com.smartdevice.livetv", "com.mediatek.tv.oneworld.tvcenter"};
@@ -118,6 +138,13 @@ final class HomeApps {
 
     private static final Map<String, Bitmap> TILES = new HashMap<>();   // key → ready card
     private static final Map<String, Bitmap> LOGOS = new HashMap<>();   // key → colored logo with no background
+
+    static String memDebug(Iterable<Bitmap> bs) { // MEMDEBUG
+        long t = 0; int n = 0; StringBuilder big = new StringBuilder(); // MEMDEBUG
+        for (Bitmap b : bs) { if (b == null || b.isRecycled()) continue; n++; t += b.getAllocationByteCount(); if (b.getAllocationByteCount() > 200000) big.append(' ').append(b.getWidth()).append('x').append(b.getHeight()); } // MEMDEBUG
+        return n + " bmp " + (t / 1024) + " KB big:" + big; // MEMDEBUG
+    } // MEMDEBUG
+    static String memDebugAll() { synchronized (HomeApps.class) { synchronized (LOGOS) { return "TILES " + memDebug(TILES.values()) + " | LOGOS " + memDebug(LOGOS.values()) + " keys=" + LOGOS.keySet(); } } } // MEMDEBUG
 
     /**
      * Home screen apps. `extract`: also lifts the logos that are not on disk yet (slow: background only); without it,
@@ -159,13 +186,13 @@ final class HomeApps {
         return null;
     }
 
-    /** The shelf's packages in order: the user's list (Settings > Shelf), or the built-in one. */
+    /** The shelf's packages in order: the user's list (Settings > Shelf), or the built-in default. */
     static List<String> shelfPackages(Context c) {
         List<String> custom = Prefs.shelf();
         if (custom != null) return custom;
         List<String> out = new ArrayList<>();
         PackageManager pm = c.getPackageManager();
-        for (String[] d : SHELF) if (out.size() < MAX_SHELF && launchIntent(pm, d[2]) != null) out.add(d[2]);
+        for (String pkg : DEFAULT_SHELF_ORDER) if (out.size() < MAX_SHELF && launchIntent(pm, pkg) != null) out.add(pkg);
         return out;
     }
 
@@ -187,11 +214,12 @@ final class HomeApps {
 
     // MARK: - Top buttons (the round ones at the top right)
 
-    static final String TOP_LIVE = "live", TOP_INPUTS = "inputs", TOP_SETTINGS = "settings";
-    static final List<String> TOP_DEFAULT = Collections.unmodifiableList(java.util.Arrays.asList(TOP_LIVE, TOP_INPUTS, TOP_SETTINGS));
+    static final String TOP_LIVE = "live", TOP_INPUTS = "inputs", TOP_WIFI = "wifi", TOP_SETTINGS = "settings";
+    static final List<String> TOP_DEFAULT =
+            Collections.unmodifiableList(java.util.Arrays.asList(TOP_LIVE, TOP_INPUTS, TOP_WIFI, TOP_SETTINGS));
     static final int MAX_TOP = TOP_DEFAULT.size();
 
-    /** The keys of the top buttons, in order (Settings > Top Buttons; by default Live TV, HDMI Inputs, Settings). */
+    /** The keys of the top buttons, in order (Settings > Top Buttons; by default Live TV, HDMI Inputs, Wi-Fi, Settings). */
     static List<String> topButtonKeys() {
         List<String> saved = Prefs.topButtons();
         if (saved == null) return TOP_DEFAULT;
@@ -200,26 +228,47 @@ final class HomeApps {
         return keys;
     }
 
-    /** The top buttons, ready to draw (0 to 3 of them). */
-    static List<Item> topButtons() {
+    /** The top buttons, ready to draw (0 to 4 of them); the Wi-Fi one's icon follows the connection right now. */
+    static List<Item> topButtons(Context c) {
         List<Item> items = new ArrayList<>();
-        for (String key : topButtonKeys()) items.add(topButton(key));
+        for (String key : topButtonKeys()) items.add(topButton(key, c));
         return items;
     }
 
-    private static Item topButton(String key) {
+    private static Item topButton(String key, Context c) {
         switch (key) {
             case TOP_LIVE: return action(LIVE_TV, TOP_LIVE, Ui.tr("light|Live TV"), "live_tv");
             case TOP_INPUTS: return action(INPUTS, TOP_INPUTS, Ui.tr("HDMI Inputs"), "hdmi");
+            case TOP_WIFI: return action(WIFI, TOP_WIFI, Ui.tr("Wi-Fi"), wifiSymbol(c));
             default: return action(SETTINGS, TOP_SETTINGS, Ui.tr("light|Settings"), "settings");
         }
     }
 
-    /** What can go in the top buttons, as {key, name}. */
+    /** What can go in the top buttons, as {key, name} (just the label; the picker doesn't show icons). */
     static List<String[]> topCandidates() {
         List<String[]> out = new ArrayList<>();
-        for (String key : TOP_DEFAULT) out.add(new String[] {key, topButton(key).label});
+        for (String key : TOP_DEFAULT) out.add(new String[] {key, topButton(key, null).label});
         return out;
+    }
+
+    /**
+     * The Wi-Fi top button's icon for the connection right now: "wifi" over Wi-Fi, "ethernet" wired (some TVs use a
+     * LAN port instead), "wifi_off" with neither. Only ACCESS_NETWORK_STATE is used here (no INTERNET permission:
+     * the app stays offline either way).
+     */
+    private static String wifiSymbol(Context c) {
+        if (c == null) return "wifi";
+        try {
+            ConnectivityManager cm = (ConnectivityManager) c.getSystemService(Context.CONNECTIVITY_SERVICE);
+            Network net = cm == null ? null : cm.getActiveNetwork();
+            NetworkCapabilities caps = net == null ? null : cm.getNetworkCapabilities(net);
+            if (caps == null) return "wifi_off";
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return "wifi";
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) return "ethernet";
+            return "wifi_off";
+        } catch (RuntimeException e) {
+            return "wifi_off";
+        }
     }
 
     /** Live TV, the HDMI inputs with a device sending a signal, and All Apps. */
@@ -247,7 +296,7 @@ final class HomeApps {
         return shortcut(kind, key, label, symbol);
     }
 
-    /** Free My TV settings, in the corner of the home screen. */
+    /** Arif Home TV settings, in the corner of the home screen. */
     static Item settings() {
         return shortcut(SETTINGS, "settings", Ui.tr("Settings"), "settings");
     }
@@ -393,7 +442,7 @@ final class HomeApps {
         synchronized (HomeApps.class) {
             TILES.keySet().removeIf(k -> k.contains(".") && !seen.contains(k));
         }
-        items.add(special(c, SETTINGS, "freemytv-settings", "Free My TV", "sparkles"));
+        items.add(special(c, SETTINGS, "freemytv-settings", "Arif Home TV", "sparkles"));
         return items;
     }
 
@@ -427,6 +476,8 @@ final class HomeApps {
             case ANDROID_SETTINGS:
                 intent = new Intent(Settings.ACTION_SETTINGS);
                 break;
+            case WIFI:
+                return openWifiSettings(a, from, x, y, w, h);
             default:
                 return false;
         }
@@ -446,6 +497,22 @@ final class HomeApps {
                 return false;
             }
         }
+    }
+
+    /**
+     * Wi-Fi settings: the direct screen; some TVs (and some Android builds) don't resolve it, so this falls back to
+     * the general wireless screen, then to Settings' own front page.
+     */
+    private static boolean openWifiSettings(Activity a, View from, int x, int y, int w, int h) {
+        android.os.Bundle anim = ActivityOptions.makeScaleUpAnimation(from, x, y, Math.max(w, 1), Math.max(h, 1)).toBundle();
+        for (String action : new String[] {Settings.ACTION_WIFI_SETTINGS, Settings.ACTION_WIRELESS_SETTINGS, Settings.ACTION_SETTINGS}) {
+            try {
+                a.startActivity(new Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), anim);
+                return true;
+            } catch (ActivityNotFoundException ignored) {
+            }
+        }
+        return false;
     }
 
     /**

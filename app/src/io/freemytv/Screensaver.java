@@ -12,7 +12,6 @@ public class Screensaver extends DreamService {
 
     @Override public void onAttachedToWindow() {
         super.onAttachedToWindow();
-        Watchdog.install(this);
         Ui.init(this);
         setInteractive(false);
         setFullscreen(true);

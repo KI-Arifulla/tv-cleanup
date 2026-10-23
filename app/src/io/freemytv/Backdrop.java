@@ -15,20 +15,22 @@ import android.graphics.Shader;
  *    scrim gets stronger when the photo is bright there;
  *  - the frosted version (192×108, heavily blurred) of the same image: the background of the frosted glass and of the
  *    bottom drawer;
- *  - the Liquid Glass version (480×270, lightly blurred): the photo shows through the shelf and the cards;
- *  - with forLight: the cards (the photo without scrims, cropped wide and tall, already at the focused card size) and
- *    the frosted and glass versions blended with white (by day) and with near-black (at night).
- * Only what is needed gets built (with forLight, no full photo: the cards are lightweight, so all 9 for the three tabs
- * fit in memory, ready); the other fields stay null.
+ *  - the Liquid Glass version (480×270, lightly blurred): the photo shows through the shelf and the top buttons;
+ *  - with forLight: the frosted and glass versions, blended with white (by day) and with near-black (at night), plus
+ *    the full-screen background (640×360, softly blurred) in both.
+ * Only what is needed gets built (with forLight, no full photo); the other fields stay null.
  * The final image lives only in GPU memory (HARDWARE): drawing it costs one texture, and the process doesn't hold 8 MB.
  */
 final class Backdrop {
     /** The UI's size against 1920×1080 (at most 1): nothing is built bigger than the screen can show. */
     private static final float UI_SCALE = uiScale();
     static final int W = ui(1920), H = ui(1080), FW = 192, FH = 108, GW = 480, GH = 270;
-    /** The cards at their focused size (1.05×): the wide one and the two tall ones. */
-    static final int WIDE_W = ui(1092), WIDE_H = ui(464), TALL_W = ui(336), TALL_H = ui(464);
-
+    /**
+     * The full-screen background, separate from the heavier FW×FH/GW×GH blurs (those stay for the frosted glass and
+     * the liquid-glass shelf/buttons): bigger and only lightly blurred, so the photo's shapes stay recognisable
+     * through it ("soft focus", not a flat gradient).
+     */
+    static final int BGW = 640, BGH = 360;
     private static float uiScale() {
         android.util.DisplayMetrics m = android.content.res.Resources.getSystem().getDisplayMetrics();
         int longest = Math.max(m.widthPixels, m.heightPixels);
@@ -41,25 +43,21 @@ final class Backdrop {
     final Bitmap image;
     final int[] frost;      // heavily blurred (frosted glass, bottom drawer)
     final int[] glass;      // lightly blurred (Liquid Glass: the photo shows through the glass)
-    final Bitmap wide, tall;            // the photo on the cards
-    final int[] light, lightGlass;      // by day: the frosted and glass versions, lightened
-    final Bitmap lightImage;            // by day: the background (the lightened frosted version, scaled up on screen)
+    final int[] lightGlass;             // by day: the glass version, lightened
+    final Bitmap lightImage;            // by day: the full-screen background (BGW × BGH, softly blurred)
     final int[] nightFrost, nightGlass; // at night: frosted (the bottom drawer's frosted glass) and glass, darkened
-    final Bitmap nightImage;            // at night: the background (the darkened frosted version)
+    final Bitmap nightImage;            // at night: the full-screen background (BGW × BGH, softly blurred)
 
-    private Backdrop(Bitmap image, int[] frost, int[] glass, Bitmap wide, Bitmap tall, int[] light, int[] lightGlass,
-                     int[] night, int[] nightGlass) {
+    private Backdrop(Bitmap image, int[] frost, int[] glass, int[] lightGlass,
+                     int[] nightFrost, int[] nightGlass, Bitmap lightImage, Bitmap nightImage) {
         this.image = image;
         this.frost = frost;
         this.glass = glass;
-        this.wide = wide;
-        this.tall = tall;
-        this.light = light;
         this.lightGlass = lightGlass;
-        this.nightFrost = night;
+        this.nightFrost = nightFrost;
         this.nightGlass = nightGlass;
-        lightImage = light == null ? null : Bitmap.createBitmap(light, FW, FH, Bitmap.Config.ARGB_8888);
-        nightImage = night == null ? null : Bitmap.createBitmap(night, FW, FH, Bitmap.Config.ARGB_8888);
+        this.lightImage = lightImage;
+        this.nightImage = nightImage;
     }
 
     static Backdrop make(Bitmap src, boolean forLight) {
@@ -71,16 +69,28 @@ final class Backdrop {
         c.drawBitmap(src, null, new RectF((W - sw) / 2, (H - sh) / 2, (W + sw) / 2, (H + sh) / 2), photo);
         src.recycle();
         if (forLight) {
-            // Light design: everything comes from the photo without scrims.
-            Bitmap wide = card(out, WIDE_W, WIDE_H), tall = card(out, TALL_W, TALL_H);
+            // Light design: everything comes from the photo without scrims. (The focused-card photos, "wide"/"tall",
+            // were built here for the hero cards; dropped with them — nothing read those fields any more.)
+            // Heavy blur, kept only for the frosted glass (drawer, toasts) and the liquid-glass shelf/buttons: those
+            // still need to read as frosted, not as a sharp photo.
             int[] frost = reduce(out, FW, FH, 3, 3);
-            int[] light = whiten(frost.clone(), 0.82f);
-            int[] glass = reduce(out, GW, GH, 2, 2);
-            int[] lightGlass = whiten(glass.clone(), 0.74f);
-            int[] night = darken(frost.clone(), 0.76f);
+            // Dock/shelf and top-button glass: radius 2 -> 3 (passes unchanged) for a moderately blurrier Liquid
+            // Glass, per feedback that the dock read too sharp.
+            int[] glass = reduce(out, GW, GH, 3, 2);
+            int[] lightGlass = whiten(glass.clone(), 0.18f);
+            int[] nightFrost = darken(frost.clone(), 0.76f);
             int[] nightGlass = darken(glass, 0.56f);
+            // The full-screen background: bigger and only softly blurred (soft-focus, not a flat gradient), and only
+            // lightly washed, so the photo's own colour and shapes come through behind the glass.
+            int[] bg = reduce(out, BGW, BGH, 1, 2);
+            int[] lightBg = whiten(bg.clone(), 0.12f);
+            int[] nightBg = darken(bg, 0.4f);
+            // RGB_565 (no alpha needed; the cross-fade and the drawer's veil are paint-level, not per-pixel): two of
+            // these at 640×360 are ~900 KB total, well under the ~1.5 MB budget.
+            Bitmap lightImage = Bitmap.createBitmap(lightBg, BGW, BGH, Bitmap.Config.RGB_565);
+            Bitmap nightImage = Bitmap.createBitmap(nightBg, BGW, BGH, Bitmap.Config.RGB_565);
             out.recycle();
-            return new Backdrop(null, frost, null, wide, tall, light, lightGlass, night, nightGlass);
+            return new Backdrop(null, frost, null, lightGlass, nightFrost, nightGlass, lightImage, nightImage);
         }
 
         float boost = Math.max(0, Math.min(0.3f, (luminance(out, 0, 0.22f, 0.5f, 0.62f) - 0.22f) * 1.1f));
@@ -107,11 +117,39 @@ final class Backdrop {
 
         int[] frost = reduce(out, FW, FH, 3, 3);
         int[] glass = reduce(out, GW, GH, 2, 2);
-        return new Backdrop(gpu(out), frost, glass, null, null, null, null, null, null);
+        return new Backdrop(gpu(out), frost, glass, null, null, null, null, null);
     }
 
     /** How many times smaller the screensaver photo's frosted version is (the glass math uses the same number). */
     static final int PHOTO_FROST = 6;
+
+    /** app/assets/wallpapers/wall1.jpg … wall5.jpg: the offline backdrop, rotated daily. */
+    static final int WALLPAPER_COUNT = 5;
+
+    /**
+     * Reads app/assets/wallpapers/wall{index+1}.jpg (960×540), downsampled no further than this screen needs.
+     * RGB_565: the photo is always blurred before it's shown, so the extra bit depth of ARGB buys nothing.
+     * Called off the UI thread (asset decoding is disk I/O plus CPU work).
+     */
+    static Bitmap wallpaper(android.content.Context c, int index) throws java.io.IOException {
+        String path = "wallpapers/wall" + (index + 1) + ".jpg";
+        android.graphics.BitmapFactory.Options bounds = new android.graphics.BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        try (java.io.InputStream in = c.getAssets().open(path)) {
+            android.graphics.BitmapFactory.decodeStream(in, null, bounds);
+        }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw new java.io.IOException("unreadable wallpaper");
+        android.graphics.BitmapFactory.Options opts = new android.graphics.BitmapFactory.Options();
+        opts.inPreferredConfig = Bitmap.Config.RGB_565;
+        opts.inSampleSize = 1;
+        while (bounds.outWidth / (opts.inSampleSize * 2) >= W) opts.inSampleSize *= 2;
+        Bitmap b;
+        try (java.io.InputStream in = c.getAssets().open(path)) {
+            b = android.graphics.BitmapFactory.decodeStream(in, null, opts);
+        }
+        if (b == null) throw new java.io.IOException("unreadable wallpaper");
+        return b;
+    }
 
     /**
      * Screensaver: the whole original from disk at w × h (center-cropped to that aspect ratio), filtered down, plus the
@@ -152,22 +190,6 @@ final class Backdrop {
             out = copy;
         }
         return new Bitmap[] {out, frost};
-    }
-
-    /** The center of the photo at the card's aspect ratio, filtered down (halving while possible) to the exact size. */
-    private static Bitmap card(Bitmap full, int w, int h) {
-        float ratio = (float) w / h;
-        int cw = Math.min(full.getWidth(), Math.round(full.getHeight() * ratio));
-        int ch = Math.min(full.getHeight(), Math.round(cw / ratio));
-        Bitmap b = Bitmap.createBitmap(full, (full.getWidth() - cw) / 2, (full.getHeight() - ch) / 2, cw, ch);
-        while (b.getWidth() / 2 >= w) {
-            Bitmap half = Bitmap.createScaledBitmap(b, b.getWidth() / 2, b.getHeight() / 2, true);
-            if (b != full) b.recycle();
-            b = half;
-        }
-        Bitmap out = Bitmap.createScaledBitmap(b, w, h, true);
-        if (b != full && b != out) b.recycle();
-        return gpu(out);
     }
 
     /** Copies it to GPU memory (cheap to draw; the process doesn't keep the pixels). */

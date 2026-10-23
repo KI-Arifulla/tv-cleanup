@@ -1,3 +1,20 @@
+# Arif Home TV
+
+> **Changes in this fork.** An offline fork of [Free My TV](https://github.com/simbasjungles/free-my-tv) (MIT), tuned for an Android 9 TV with 1 GB of memory:
+>
+> - **Fully offline.** No internet permission. No TMDB picks, weather or crypto. Day and night follow a sunrise/sunset calculated on the TV.
+> - **Frosted glass on Android 9.** Five bundled photos rotate daily behind the glass ([credits](app/assets/wallpapers/CREDITS.md)). The shelf, buttons and drawer draw a pre-blurred copy of the photo, so the glass works without Android 13's shaders.
+> - **Nothing privileged.** The in-app ADB client, home switching, app disabling, boot receiver and accessibility service are removed. The app asks for no permissions; set it as the home screen once with adb.
+> - **Shelf and remote.** The shelf defaults to the TV's installed streaming apps. Down from the shelf opens HDMI inputs. Several frame-time fixes for older TVs.
+>
+> | Home | Inputs (Down from the shelf) | All Apps |
+> |---|---|---|
+> | ![Home](screenshots/01-home.webp) | ![Inputs](screenshots/02-inputs.webp) | ![All Apps](screenshots/03-allapps.webp) |
+>
+> | Settings | Screensaver |
+> |---|---|
+> | ![Settings](screenshots/04-settings.webp) | ![Screensaver](screenshots/05-screensaver.webp) |
+
 <div align="center">
 
 <img src="docs/assets/icon-512.png" width="96" alt="">

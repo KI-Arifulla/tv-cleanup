@@ -7,7 +7,8 @@ import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.RectF;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Blurred rounded-rectangle shadows for older GPUs. A BlurMaskFilter is rasterized on the CPU and uploaded again every
@@ -17,13 +18,26 @@ import java.util.HashMap;
  * Android 12+ keeps drawing the real BlurMaskFilter.
  */
 final class Shadows {
-    private final HashMap<Long, Bitmap> cache = new HashMap<>();
+    private static final int MAX_CACHE = 96;
+    // Access-order LRU: a stable key (the shelf tiles, the top buttons) is kept alive by every frame that redraws it,
+    // and only the shapes that actually stopped being used age out. A plain HashMap cleared at a size cap thrashed:
+    // once it was full, every eviction wiped every cached mask, including the stable ones still drawn every frame.
+    private final LinkedHashMap<Long, Bitmap> cache = new LinkedHashMap<Long, Bitmap>(MAX_CACHE, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<Long, Bitmap> eldest) {
+            if (size() <= MAX_CACHE) return false;
+            Bitmap old = eldest.getValue();
+            if (old != null) old.recycle();
+            return true;
+        }
+    };
     private final Paint tint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final Rect src = new Rect();
     private final RectF dst = new RectF();
     private final float[] xs = new float[4], ys = new float[4];
     private final int[] sx = new int[4], sy = new int[4];
     boolean dither;
+    String memDebug() { return HomeApps.memDebug(new java.util.ArrayList<>(cache.values())); } // MEMDEBUG
 
     /** Draws `shape` (radius `r`) with `paint`, whose BlurMaskFilter was made with radius `blur`. */
     void draw(Canvas c, RectF shape, float r, float blur, Paint paint) {
@@ -90,8 +104,7 @@ final class Shadows {
         }
         mask = full.extractAlpha();
         full.recycle();
-        if (cache.size() > 64) cache.clear();     // focus animations step through a few sizes; keep it bounded
-        cache.put(key, mask);
+        cache.put(key, mask);     // removeEldestEntry() keeps this bounded; LRU order means stable keys survive
         return mask;
     }
 }

@@ -4,6 +4,8 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapShader;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.LinearGradient;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.graphics.RuntimeShader;
@@ -24,9 +26,17 @@ final class Scene {
     private final Paint auroraPaint = new Paint();
     private final Paint glassPaint = new Paint();
     private final Paint liquidPaint = new Paint();
-    private final Paint flatFill = new Paint(Paint.ANTI_ALIAS_FLAG);
+    // Legacy (API < 33, no AGSL) fallback: flatFill also draws the cached blurred bitmaps (see drawGlassBitmap),
+    // so it needs FILTER_BITMAP_FLAG (setFilterMode on BitmapShader is API 33+ and must stay off this path).
+    private final Paint flatFill = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Paint flatRim = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint fallback = new Paint();
+    // Rim stroke for the legacy bitmap glass: one cached gradient (unit space) repositioned per rect via its local
+    // matrix, so nothing is allocated per frame.
+    private final LinearGradient fbRim = new LinearGradient(0, 0, 0, 1, 0x99FFFFFF, 0x14FFFFFF, Shader.TileMode.CLAMP);
+    private final Paint fbRimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Matrix fbMatrix = new Matrix();
+    private final Matrix fbRimMatrix = new Matrix();
     private final Recording auroraNode = Recording.create("aurora");
     // The layer is drawn at a quarter size and scaled up: filtered, its soft shapes stay soft instead of stepping.
     private final Paint layerPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
@@ -35,6 +45,10 @@ final class Scene {
     private boolean auroraDirty = true, imageFrost, imageGlass;
     private Bitmap frostImage, glassA, glassB;
     private BitmapShader glassShaderA;
+    // Legacy-only caches: plain (no setFilterMode) BitmapShaders wrapping the same blurred bitmaps above, built once
+    // when the data changes (not per frame) and reused by drawGlassBitmap via a shared, mutated-not-recreated Matrix.
+    private BitmapShader fbFrostShader, fbGlassShaderA, fbGlassShaderB;
+    private float offsetX, offsetY, glassMix;
     private final boolean withGlass;
 
     Scene() {
@@ -60,6 +74,9 @@ final class Scene {
         flatRim.setStyle(Paint.Style.STROKE);
         flatRim.setColor(0x33FFFFFF);
         flatRim.setStrokeWidth(1.5f);
+        fbRimPaint.setStyle(Paint.Style.STROKE);
+        fbRimPaint.setStrokeWidth(1.25f);
+        fbRimPaint.setShader(fbRim);
     }
 
     void setSize(int width, int height) {
@@ -125,9 +142,16 @@ final class Scene {
     /** Photo transition: both photos in the glass, blended by setGlassMix (0 = the first one). */
     void setGlassImages(int[] from, int[] to) {
         imageGlass = true;
-        if (liquid == null) return;     // no AGSL (Android 8 to 12): the glass is a flat fill, nothing reads the images
         glassA = fill(glassA, from);
         if (to != null) glassB = fill(glassB, to);
+        if (liquid == null) {
+            // No AGSL (Android 8 to 12): keep the blurred bitmaps and cache plain BitmapShaders for the flat-fill
+            // fallback (drawGlassBitmap), built once here rather than per frame.
+            if (fbGlassShaderA == null) fbGlassShaderA = new BitmapShader(glassA, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+            fbGlassShaderB = to == null ? null
+                    : fbGlassShaderB != null ? fbGlassShaderB : new BitmapShader(glassB, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+            return;
+        }
         glassShaderA = linear(glassA);
         liquid.setInputShader("imageA", glassShaderA);
         liquid.setInputShader("imageB", to != null ? linear(glassB) : glassShaderA);
@@ -136,7 +160,8 @@ final class Scene {
     }
 
     void setGlassMix(float t) {
-        if (liquid != null) liquid.setFloatUniform("mixB", Math.max(0, Math.min(1, t)));
+        glassMix = Math.max(0, Math.min(1, t));
+        if (liquid != null) liquid.setFloatUniform("mixB", glassMix);
     }
 
     /** The liquid glass goes back to the frosted aurora. */
@@ -150,6 +175,49 @@ final class Scene {
         if (b == null) b = Bitmap.createBitmap(Backdrop.GW, Backdrop.GH, Bitmap.Config.ARGB_8888);
         b.setPixels(pixels, 0, Backdrop.GW, 0, 0, Backdrop.GW, Backdrop.GH);
         return b;
+    }
+
+    /**
+     * Legacy (API < 33, no AGSL) glass fill: draws a cached blurred bitmap through its cached BitmapShader into
+     * `r`, tinted at tintAlpha, lifted, then a 1.25px gradient rim — instead of a flat fill. shaderB/bmpB may be
+     * null (no crossfade); otherwise the two bitmaps are blended by `glassMix`. Nothing here is allocated: fbMatrix
+     * and fbRimMatrix are only mutated (setScale/postTranslate), and flatFill/fbRimPaint are reused across calls.
+     */
+    private void drawGlassBitmap(Canvas c, RectF r, float radius, int tint, float tintAlpha, float lift, float alpha,
+                                  BitmapShader shaderA, Bitmap bmpA, BitmapShader shaderB, Bitmap bmpB) {
+        float combined = Math.min(1, alpha);
+        fbMatrix.setScale((float) w / bmpA.getWidth(), (float) h / bmpA.getHeight());
+        fbMatrix.postTranslate(offsetX, offsetY);
+        shaderA.setLocalMatrix(fbMatrix);
+        flatFill.setShader(shaderA);
+        flatFill.setAlpha(Math.round(255 * combined * (shaderB != null ? (1 - glassMix) : 1)));
+        c.drawRoundRect(r, radius, radius, flatFill);
+
+        if (shaderB != null && glassMix > 0.004f) {   // crossfade: second bitmap, weighted by glassMix
+            fbMatrix.setScale((float) w / bmpB.getWidth(), (float) h / bmpB.getHeight());
+            fbMatrix.postTranslate(offsetX, offsetY);
+            shaderB.setLocalMatrix(fbMatrix);
+            flatFill.setShader(shaderB);
+            flatFill.setAlpha(Math.round(255 * combined * glassMix));
+            c.drawRoundRect(r, radius, radius, flatFill);
+        }
+
+        flatFill.setShader(null);
+        flatFill.setColor(tint | 0xFF000000);
+        flatFill.setAlpha(Math.round(255 * combined * Math.max(0, Math.min(1, tintAlpha))));
+        c.drawRoundRect(r, radius, radius, flatFill);
+
+        if (lift > 0.004f) {
+            flatFill.setColor(Color.WHITE);
+            flatFill.setAlpha(Math.round(255 * combined * Math.min(1, lift)));
+            c.drawRoundRect(r, radius, radius, flatFill);
+        }
+
+        fbRimMatrix.setScale(1, r.height());
+        fbRimMatrix.postTranslate(0, r.top);
+        fbRim.setLocalMatrix(fbRimMatrix);
+        fbRimPaint.setAlpha(Math.round(255 * combined));
+        c.drawRoundRect(r, radius, radius, fbRimPaint);
     }
 
     private static BitmapShader linear(Bitmap b) {
@@ -166,7 +234,16 @@ final class Scene {
                 float specular, float alpha) {
         if (alpha <= 0.004f) return;
         if (liquid == null) {
-            glass(c, r, radius, tint, Math.max(0.5f, tintAlpha), 0, 0, lift, 1, alpha);
+            // No AGSL: draw the cached blurred photo (setGlassImages) through a BitmapShader instead of a flat fill,
+            // when one has been set; otherwise the same flat fill as before.
+            if (fbGlassShaderA != null) {
+                drawGlassBitmap(c, r, radius, tint, Math.max(0.5f, tintAlpha), lift, alpha, fbGlassShaderA, glassA, fbGlassShaderB, glassB);
+            } else {
+                flatFill.setShader(null);
+                flatFill.setColor(Ui.alpha(tint | 0xFF000000, Math.max(0.5f, tintAlpha)));
+                c.drawRoundRect(r, radius, radius, flatFill);
+                c.drawRoundRect(r, radius, radius, flatRim);
+            }
             return;
         }
         liquid.setFloatUniform("center", r.centerX(), r.centerY());
@@ -185,9 +262,14 @@ final class Scene {
     /** The glass now reads the blurred background image (Backdrop.FW × FH, ARGB). */
     void setFrost(int[] pixels) {
         imageFrost = true;
-        if (glass == null) return;      // as above: no shader reads the frosted image
         if (frostImage == null) frostImage = Bitmap.createBitmap(Backdrop.FW, Backdrop.FH, Bitmap.Config.ARGB_8888);
         frostImage.setPixels(pixels, 0, Backdrop.FW, 0, 0, Backdrop.FW, Backdrop.FH);
+        if (glass == null) {
+            // No AGSL: keep the blurred bitmap and cache a plain BitmapShader for the flat-fill fallback (built
+            // once; frostImage is reused and mutated in place on later calls, so the shader stays valid).
+            if (fbFrostShader == null) fbFrostShader = new BitmapShader(frostImage, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+            return;
+        }
         BitmapShader s = new BitmapShader(frostImage, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
         s.setFilterMode(BitmapShader.FILTER_MODE_LINEAR);
         glass.setInputShader("frost", s);
@@ -209,6 +291,8 @@ final class Scene {
 
     /** Offset (px) of the layer that will draw glass, if it was moved on screen without being redrawn. */
     void setOffset(float x, float y) {
+        offsetX = x;
+        offsetY = y;
         if (glass != null) glass.setFloatUniform("offset", x, y);
         if (liquid != null) liquid.setFloatUniform("offset", x, y);
     }
@@ -252,7 +336,14 @@ final class Scene {
     void glass(Canvas c, RectF r, float radius, int tint, float tintAlpha, int glow, float glowAlpha, float lift, float body, float alpha) {
         if (alpha <= 0.004f) return;
         if (glass == null) {
+            // No AGSL: draw the cached blurred background (setFrost) through a BitmapShader instead of a flat fill,
+            // when one has been set; otherwise the same flat fill as before. drawGlassBitmap draws its own rim.
+            if (body > 0 && fbFrostShader != null) {
+                drawGlassBitmap(c, r, radius, tint, tintAlpha, lift, alpha, fbFrostShader, frostImage, null, null);
+                return;
+            }
             if (body > 0) {
+                flatFill.setShader(null);
                 flatFill.setColor(Ui.alpha(tint | 0xFF000000, Math.max(0.35f, tintAlpha)));
                 c.drawRoundRect(r, radius, radius, flatFill);
             }
