@@ -37,7 +37,6 @@ final class Shadows {
     private final float[] xs = new float[4], ys = new float[4];
     private final int[] sx = new int[4], sy = new int[4];
     boolean dither;
-    String memDebug() { return HomeApps.memDebug(new java.util.ArrayList<>(cache.values())); } // MEMDEBUG
 
     /** Draws `shape` (radius `r`) with `paint`, whose BlurMaskFilter was made with radius `blur`. */
     void draw(Canvas c, RectF shape, float r, float blur, Paint paint) {

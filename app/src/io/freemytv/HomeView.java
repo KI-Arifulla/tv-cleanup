@@ -376,24 +376,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback {
 
     // MARK: - Lifecycle (called by HomeActivity)
 
-    private final Runnable memTick = () -> { memReport(); handler.postDelayed(this.memTick, 60000); }; // MEMDEBUG
-    private void memReport() { // MEMDEBUG
-        java.util.List<Bitmap> bd = new java.util.ArrayList<>(); // MEMDEBUG
-        for (Backdrop b : new Backdrop[] {wallpaper, bgFrom, bgTo}) if (b != null) { bd.add(b.lightImage); bd.add(b.nightImage); } // MEMDEBUG
-        long nb = android.os.Debug.getNativeHeapAllocatedSize() / 1024; // MEMDEBUG
-        System.gc(); System.runFinalization(); System.gc(); // MEMDEBUG
-        android.util.Log.i("ArifMem", "native before gc=" + nb + "KB after gc=" + (android.os.Debug.getNativeHeapAllocatedSize() / 1024) + "KB java=" + ((Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024) + "KB"); // MEMDEBUG
-        android.util.Log.i("ArifMem", HomeApps.memDebugAll()); // MEMDEBUG
-        android.util.Log.i("ArifMem", "symbols " + Symbols.memDebug() + " | glyphs " + Glyphs.memDebug() + " | shadows " + shadows.memDebug()); // MEMDEBUG
-        android.util.Log.i("ArifMem", "crisp " + HomeApps.memDebug(new java.util.ArrayList<>(crispLogos.values())) + " | dimmed " + HomeApps.memDebug(new java.util.ArrayList<>(dimmedImages.values())) + " | backdrops(same?" + (wallpaper == bgTo) + "/" + (wallpaper == bgFrom) + ") " + HomeApps.memDebug(bd)); // MEMDEBUG
-    } // MEMDEBUG
-
     void resume() {
         if (running) return;
         running = true;
         checkNight(false);
         loadWallpaper();   // a new day since the last resume: picks up the next wallpaper
-        handler.removeCallbacks(memTick); handler.postDelayed(memTick, 20000); // MEMDEBUG
         long now = SystemClock.uptimeMillis();
         // Some remotes (Xiaomi's) send one Home press as a burst of 5 to 8, and each one pauses and resumes the home
         // screen: those after the first change nothing, so the lists are read only once.

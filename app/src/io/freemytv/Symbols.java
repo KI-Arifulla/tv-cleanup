@@ -32,7 +32,6 @@ final class Symbols {
      */
     private static final float PX_PER_POINT = 96 * 1.5f;
     private static final Map<String, Bitmap> CACHE = new HashMap<>();
-    static String memDebug() { synchronized (CACHE) { return HomeApps.memDebug(CACHE.values()); } } // MEMDEBUG
     private static final Paint PAINT = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private static final RectF RECT = new RectF();
     private static final Set<String> VECTOR = new HashSet<>(java.util.Arrays.asList("wifi", "wifi_off", "ethernet"));

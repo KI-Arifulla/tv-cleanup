@@ -19,7 +19,6 @@ final class Glyphs {
     private Glyphs() {}
 
     private static final SparseArray<Bitmap> BITMAPS = new SparseArray<>();
-    static String memDebug() { synchronized (BITMAPS) { java.util.List<Bitmap> l = new java.util.ArrayList<>(); for (int i = 0; i < BITMAPS.size(); i++) l.add(BITMAPS.valueAt(i)); return HomeApps.memDebug(l); } } // MEMDEBUG
     private static final Paint PAINT = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
 
     /** Draws the coin centered at (cx, cy), sized to the text next to it (cap height `cap`), in `color`. */

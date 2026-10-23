@@ -139,12 +139,6 @@ final class HomeApps {
     private static final Map<String, Bitmap> TILES = new HashMap<>();   // key → ready card
     private static final Map<String, Bitmap> LOGOS = new HashMap<>();   // key → colored logo with no background
 
-    static String memDebug(Iterable<Bitmap> bs) { // MEMDEBUG
-        long t = 0; int n = 0; StringBuilder big = new StringBuilder(); // MEMDEBUG
-        for (Bitmap b : bs) { if (b == null || b.isRecycled()) continue; n++; t += b.getAllocationByteCount(); if (b.getAllocationByteCount() > 200000) big.append(' ').append(b.getWidth()).append('x').append(b.getHeight()); } // MEMDEBUG
-        return n + " bmp " + (t / 1024) + " KB big:" + big; // MEMDEBUG
-    } // MEMDEBUG
-    static String memDebugAll() { synchronized (HomeApps.class) { synchronized (LOGOS) { return "TILES " + memDebug(TILES.values()) + " | LOGOS " + memDebug(LOGOS.values()) + " keys=" + LOGOS.keySet(); } } } // MEMDEBUG
 
     /**
      * Home screen apps. `extract`: also lifts the logos that are not on disk yet (slow: background only); without it,
