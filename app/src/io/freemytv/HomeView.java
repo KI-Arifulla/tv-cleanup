@@ -688,7 +688,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback {
         LOADER.execute(() -> {
             Backdrop b;
             try {
-                b = Backdrop.make(Backdrop.wallpaper(c, index), true);
+                b = Backdrop.make(Backdrop.wallpaper(c, index));
             } catch (java.io.IOException | RuntimeException | OutOfMemoryError e) {
                 AppLog.w("wallpaper: " + e.getMessage());
                 return;

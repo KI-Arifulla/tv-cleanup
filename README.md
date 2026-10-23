@@ -7,6 +7,7 @@
 > - **Frosted glass on Android 9.** Five bundled photos rotate daily behind the glass ([credits](app/assets/wallpapers/CREDITS.md)). The shelf, buttons and drawer draw a pre-blurred copy of the photo, so the glass works without Android 13's shaders.
 > - **Nothing privileged.** The in-app ADB client, home switching, app disabling, boot receiver and accessibility service are removed. The app asks for no permissions; set it as the home screen once with adb.
 > - **Shelf and remote.** The shelf defaults to the TV's installed streaming apps. Down from the shelf opens HDMI inputs. Several frame-time fixes for older TVs.
+> - **Android TV only.** Upstream's LG and Samsung versions are not included (see [Supported TVs](#supported-tvs)).
 >
 > | Home | Inputs (Down from the shelf) | All Apps |
 > |---|---|---|
@@ -15,6 +16,20 @@
 > | Settings | Screensaver |
 > |---|---|
 > | ![Settings](screenshots/04-settings.webp) | ![Screensaver](screenshots/05-screensaver.webp) |
+
+## Supported TVs
+
+Any TV or box running Android TV or Google TV, Android 8 or newer. Nothing in the app is specific to one brand: HDMI inputs and the Wi-Fi button use standard Android APIs, and the UI scales down on TVs that draw at 720p. It was built and tested on a Xiaomi Mi TV (Android 9, 1 GB of memory).
+
+| TV or device | Works | Notes |
+|---|---|---|
+| Android TV 8+ (Xiaomi, Sony, TCL, Philips, Hisense Android models, Nvidia Shield…) | Yes | |
+| Google TV (Chromecast with Google TV, newer Sony and TCL) | Mostly | Becoming the home screen means disabling Google's launcher with adb; some system updates turn it back on. |
+| Amazon Fire TV | Partly | Installs and runs as an app, but newer Fire OS doesn't let another app take over the Home button. |
+| Samsung (Tizen), LG (webOS) | No | Not Android. Upstream [Free My TV](https://github.com/simbasjungles/free-my-tv) has versions for both, without this fork's changes. |
+| Roku, Apple TV | No | |
+
+What changes from one TV to the next is the setup, not the app: each brand ships its own launcher (Google's `com.google.android.tvlauncher`, Xiaomi's PatchWall `com.mitv.tvhome.atv`, and so on), and that launcher has to be disabled with adb before this one can be the home screen. Disable it, don't uninstall it: `adb shell pm enable <package>` brings it back.
 
 ## Install
 

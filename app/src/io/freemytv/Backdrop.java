@@ -2,24 +2,16 @@ package io.freemytv;
 
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
-import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.RectF;
-import android.graphics.Shader;
 
 /**
- * The home screen background made from the recommendation's image, built once in the background:
- *  - the photo cropped to 16:9 at the TV's UI size (1920×1080; 1280×720 on TVs that draw their UI at 720p, like TCL's
- *    1 GB models, where every bitmap here is 2/3 as wide), with the dark scrims already applied (on the left,
- *    where the hero text sits; at the bottom, behind the shelf; a faint one at the top, behind the buttons); the left
- *    scrim gets stronger when the photo is bright there;
- *  - the frosted version (192×108, heavily blurred) of the same image: the background of the frosted glass and of the
- *    bottom drawer;
+ * The home screen background, built once in the background from the bundled wallpaper (app/assets/wallpapers):
+ *  - the frosted version (192×108, heavily blurred): the background of the frosted glass and of the bottom drawer;
  *  - the Liquid Glass version (480×270, lightly blurred): the photo shows through the shelf and the top buttons;
- *  - with forLight: the frosted and glass versions, blended with white (by day) and with near-black (at night), plus
- *    the full-screen background (640×360, softly blurred) in both.
- * Only what is needed gets built (with forLight, no full photo); the other fields stay null.
- * The final image lives only in GPU memory (HARDWARE): drawing it costs one texture, and the process doesn't hold 8 MB.
+ *  - both blended with white (by day) and with near-black (at night), plus the full-screen background (640×360,
+ *    softly blurred) in both.
+ * Sizes follow the TV's UI size (1920×1080; 1280×720 on TVs that draw their UI at 720p, where W×H is 2/3 as wide).
  */
 final class Backdrop {
     /** The UI's size against 1920×1080 (at most 1): nothing is built bigger than the screen can show. */
@@ -40,19 +32,15 @@ final class Backdrop {
     private static int ui(int px) {
         return Math.round(px * UI_SCALE);
     }
-    final Bitmap image;
     final int[] frost;      // heavily blurred (frosted glass, bottom drawer)
-    final int[] glass;      // lightly blurred (Liquid Glass: the photo shows through the glass)
     final int[] lightGlass;             // by day: the glass version, lightened
     final Bitmap lightImage;            // by day: the full-screen background (BGW × BGH, softly blurred)
     final int[] nightFrost, nightGlass; // at night: frosted (the bottom drawer's frosted glass) and glass, darkened
     final Bitmap nightImage;            // at night: the full-screen background (BGW × BGH, softly blurred)
 
-    private Backdrop(Bitmap image, int[] frost, int[] glass, int[] lightGlass,
-                     int[] nightFrost, int[] nightGlass, Bitmap lightImage, Bitmap nightImage) {
-        this.image = image;
+    private Backdrop(int[] frost, int[] lightGlass, int[] nightFrost, int[] nightGlass,
+                     Bitmap lightImage, Bitmap nightImage) {
         this.frost = frost;
-        this.glass = glass;
         this.lightGlass = lightGlass;
         this.nightFrost = nightFrost;
         this.nightGlass = nightGlass;
@@ -60,7 +48,7 @@ final class Backdrop {
         this.nightImage = nightImage;
     }
 
-    static Backdrop make(Bitmap src, boolean forLight) {
+    static Backdrop make(Bitmap src) {
         Bitmap out = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(out);
         Paint photo = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
@@ -68,56 +56,28 @@ final class Backdrop {
         float sw = src.getWidth() * scale, sh = src.getHeight() * scale;
         c.drawBitmap(src, null, new RectF((W - sw) / 2, (H - sh) / 2, (W + sw) / 2, (H + sh) / 2), photo);
         src.recycle();
-        if (forLight) {
-            // Light design: everything comes from the photo without scrims. (The focused-card photos, "wide"/"tall",
-            // were built here for the hero cards; dropped with them — nothing read those fields any more.)
-            // Heavy blur, kept only for the frosted glass (drawer, toasts) and the liquid-glass shelf/buttons: those
-            // still need to read as frosted, not as a sharp photo.
-            int[] frost = reduce(out, FW, FH, 3, 3);
-            // Dock/shelf and top-button glass: radius 2 -> 3 (passes unchanged) for a moderately blurrier Liquid
-            // Glass, per feedback that the dock read too sharp.
-            int[] glass = reduce(out, GW, GH, 3, 2);
-            int[] lightGlass = whiten(glass.clone(), 0.18f);
-            int[] nightFrost = darken(frost.clone(), 0.76f);
-            int[] nightGlass = darken(glass, 0.56f);
-            // The full-screen background: bigger and only softly blurred (soft-focus, not a flat gradient), and only
-            // lightly washed, so the photo's own colour and shapes come through behind the glass.
-            int[] bg = reduce(out, BGW, BGH, 1, 2);
-            int[] lightBg = whiten(bg.clone(), 0.12f);
-            int[] nightBg = darken(bg, 0.4f);
-            // RGB_565 (no alpha needed; the cross-fade and the drawer's veil are paint-level, not per-pixel): two of
-            // these at 640×360 are ~900 KB total, well under the ~1.5 MB budget.
-            Bitmap lightImage = Bitmap.createBitmap(lightBg, BGW, BGH, Bitmap.Config.RGB_565);
-            Bitmap nightImage = Bitmap.createBitmap(nightBg, BGW, BGH, Bitmap.Config.RGB_565);
-            out.recycle();
-            return new Backdrop(null, frost, null, lightGlass, nightFrost, nightGlass, lightImage, nightImage);
-        }
-
-        float boost = Math.max(0, Math.min(0.3f, (luminance(out, 0, 0.22f, 0.5f, 0.62f) - 0.22f) * 1.1f));
-        Paint scrim = new Paint(Paint.DITHER_FLAG);
-        scrim.setShader(new LinearGradient(0, 0, W * 0.68f, 0,
-                new int[] {black(0.66f + boost), black(0.52f + boost * 0.8f), black(0.26f + boost * 0.4f), black(0.07f), 0},
-                new float[] {0, 0.25f, 0.55f, 0.8f, 1}, Shader.TileMode.CLAMP));
-        c.drawRect(0, 0, W, H, scrim);
-        // At the bottom, a faint scrim: the photo must show through the glass shelf (the glass provides the contrast).
-        scrim.setShader(new LinearGradient(0, H, 0, H * 0.4f,
-                new int[] {black(0.38f), black(0.3f), black(0.18f), black(0.05f), 0},
-                new float[] {0, 0.25f, 0.55f, 0.8f, 1}, Shader.TileMode.CLAMP));
-        c.drawRect(0, H * 0.4f, W, H, scrim);
-        // Behind the prices (above the shelf, on the right), a localized scrim for the small text.
-        scrim.setShader(new android.graphics.RadialGradient(W * 0.8f, H * 0.65f, W * 0.24f,
-                new int[] {black(0.42f), black(0.18f), 0}, new float[] {0, 0.55f, 1}, Shader.TileMode.CLAMP));
-        c.save();
-        c.scale(1, 0.32f, W * 0.8f, H * 0.65f);
-        c.drawCircle(W * 0.8f, H * 0.65f, W * 0.24f, scrim);
-        c.restore();
-        scrim.setShader(new LinearGradient(0, 0, 0, H * 0.24f, new int[] {black(0.34f), black(0.1f), 0},
-                new float[] {0, 0.5f, 1}, Shader.TileMode.CLAMP));
-        c.drawRect(0, 0, W, H * 0.24f, scrim);
-
+        // Light design: everything comes from the photo without scrims. (The focused-card photos, "wide"/"tall",
+        // were built here for the hero cards; dropped with them — nothing read those fields any more.)
+        // Heavy blur, kept only for the frosted glass (drawer, toasts) and the liquid-glass shelf/buttons: those
+        // still need to read as frosted, not as a sharp photo.
         int[] frost = reduce(out, FW, FH, 3, 3);
-        int[] glass = reduce(out, GW, GH, 2, 2);
-        return new Backdrop(gpu(out), frost, glass, null, null, null, null, null);
+        // Dock/shelf and top-button glass: radius 2 -> 3 (passes unchanged) for a moderately blurrier Liquid
+        // Glass, per feedback that the dock read too sharp.
+        int[] glass = reduce(out, GW, GH, 3, 2);
+        int[] lightGlass = whiten(glass.clone(), 0.18f);
+        int[] nightFrost = darken(frost.clone(), 0.76f);
+        int[] nightGlass = darken(glass, 0.56f);
+        // The full-screen background: bigger and only softly blurred (soft-focus, not a flat gradient), and only
+        // lightly washed, so the photo's own colour and shapes come through behind the glass.
+        int[] bg = reduce(out, BGW, BGH, 1, 2);
+        int[] lightBg = whiten(bg.clone(), 0.12f);
+        int[] nightBg = darken(bg, 0.4f);
+        // RGB_565 (no alpha needed; the cross-fade and the drawer's veil are paint-level, not per-pixel): two of
+        // these at 640×360 are ~900 KB total, well under the ~1.5 MB budget.
+        Bitmap lightImage = Bitmap.createBitmap(lightBg, BGW, BGH, Bitmap.Config.RGB_565);
+        Bitmap nightImage = Bitmap.createBitmap(nightBg, BGW, BGH, Bitmap.Config.RGB_565);
+        out.recycle();
+        return new Backdrop(frost, lightGlass, nightFrost, nightGlass, lightImage, nightImage);
     }
 
     /** How many times smaller the screensaver photo's frosted version is (the glass math uses the same number). */
@@ -149,47 +109,6 @@ final class Backdrop {
         }
         if (b == null) throw new java.io.IOException("unreadable wallpaper");
         return b;
-    }
-
-    /**
-     * Screensaver: the whole original from disk at w × h (center-cropped to that aspect ratio), filtered down, plus the
-     * frosted version (1/6, blurred) for the glass clock. `light` receives the luminance (0 to 1) where the caption
-     * (bottom left) and the clock (top right) sit, for the scrims. Returns {photo (mutable), frosted}.
-     */
-    static Bitmap[] photo(java.io.File f, int w, int h, float[] light) throws java.io.IOException {
-        android.graphics.BitmapFactory.Options bounds = new android.graphics.BitmapFactory.Options();
-        bounds.inJustDecodeBounds = true;
-        android.graphics.BitmapFactory.decodeFile(f.getPath(), bounds);
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw new java.io.IOException("unreadable image");
-        android.graphics.BitmapFactory.Options opts = new android.graphics.BitmapFactory.Options();
-        opts.inSampleSize = 1;
-        while (bounds.outWidth / (opts.inSampleSize * 2) >= w && bounds.outHeight / (opts.inSampleSize * 2) >= h) opts.inSampleSize *= 2;
-        Bitmap src = android.graphics.BitmapFactory.decodeFile(f.getPath(), opts);
-        if (src == null) throw new java.io.IOException("unreadable image");
-        float ratio = (float) w / h;
-        int cw = Math.min(src.getWidth(), Math.round(src.getHeight() * ratio));
-        int ch = Math.min(src.getHeight(), Math.round(cw / ratio));
-        Bitmap b = Bitmap.createBitmap(src, (src.getWidth() - cw) / 2, (src.getHeight() - ch) / 2, cw, ch);
-        if (b != src) src.recycle();
-        while (b.getWidth() / 2 >= w) {
-            Bitmap half = Bitmap.createScaledBitmap(b, b.getWidth() / 2, b.getHeight() / 2, true);
-            b.recycle();
-            b = half;
-        }
-        Bitmap out = b.getWidth() == w && b.getHeight() == h ? b : Bitmap.createScaledBitmap(b, w, h, true);
-        if (out != b) b.recycle();
-        if (light != null && light.length >= 2) {
-            light[0] = luminance(out, 0, 0.6f, 0.5f, 0.95f);
-            light[1] = luminance(out, 0.62f, 0.04f, 0.96f, 0.36f);
-        }
-        int fw = w / PHOTO_FROST, fh = h / PHOTO_FROST;
-        Bitmap frost = Bitmap.createBitmap(reduce(out, fw, fh, 3, 2), fw, fh, Bitmap.Config.ARGB_8888);
-        if (!out.isMutable()) {
-            Bitmap copy = out.copy(Bitmap.Config.ARGB_8888, true);
-            out.recycle();
-            out = copy;
-        }
-        return new Bitmap[] {out, frost};
     }
 
     /** Copies it to GPU memory (cheap to draw; the process doesn't keep the pixels). */
@@ -266,25 +185,5 @@ final class Backdrop {
                 sb += (add & 255) - (sub & 255);
             }
         }
-    }
-
-    /** Average luminance (0 to 1) of a rectangle given as fractions of the image, by sampling. */
-    private static float luminance(Bitmap b, float x0, float y0, float x1, float y1) {
-        float sum = 0;
-        int count = 0;
-        for (int j = 0; j < 24; j++) {
-            for (int i = 0; i < 32; i++) {
-                int x = Math.round((x0 + (x1 - x0) * (i + 0.5f) / 32) * (b.getWidth() - 1));
-                int y = Math.round((y0 + (y1 - y0) * (j + 0.5f) / 24) * (b.getHeight() - 1));
-                int p = b.getPixel(x, y);
-                sum += (0.2126f * ((p >> 16) & 255) + 0.7152f * ((p >> 8) & 255) + 0.0722f * (p & 255)) / 255f;
-                count++;
-            }
-        }
-        return sum / count;
-    }
-
-    private static int black(float a) {
-        return Math.round(Math.max(0, Math.min(1, a)) * 255) << 24;
     }
 }
