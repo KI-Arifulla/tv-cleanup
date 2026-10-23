@@ -2,6 +2,7 @@
 
 > **Changes in this fork.** An offline fork of [Free My TV](https://github.com/simbasjungles/free-my-tv) (MIT), tuned for an Android 9 TV with 1 GB of memory:
 >
+> - **Why this fork.** Upstream's frosted-glass look needs a higher-end TV (Android 13 shaders, a capable GPU, more memory). This is a separate, lighter copy for lower-end models: the same frosted look, drawn from pre-blurred photos, with a few theme changes.
 > - **Fully offline.** No internet permission. No TMDB picks, weather or crypto. Day and night follow a sunrise/sunset calculated on the TV.
 > - **Frosted glass on Android 9.** Five bundled photos rotate daily behind the glass ([credits](app/assets/wallpapers/CREDITS.md)). The shelf, buttons and drawer draw a pre-blurred copy of the photo, so the glass works without Android 13's shaders.
 > - **Nothing privileged.** The in-app ADB client, home switching, app disabling, boot receiver and accessibility service are removed. The app asks for no permissions; set it as the home screen once with adb.
